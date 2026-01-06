@@ -94,6 +94,7 @@ vec3 checkerboardColor(vec3 rgbColor, vec3 hitPoint) {
     HitInfo info;
     info.t = 10000.0; // Initialize with a far distance
     info.type = -1;   // -1 indicates no hit
+    info.rayDir = rayDir;
     
     // 1. Intersect Plane
     float denom = dot(uPlane.normal, rayDir);
@@ -133,8 +134,6 @@ vec3 checkerboardColor(vec3 rgbColor, vec3 hitPoint) {
 
     return info;
 }
-
-// replace int to your hit data type
 /* calculates color based on hit data and uv coordinates */
 vec3 calcColor(/*hit data type*/ HitInfo hitInfo) {
     if (hitInfo.type == -1) {
@@ -143,20 +142,25 @@ vec3 calcColor(/*hit data type*/ HitInfo hitInfo) {
 
     vec3 finalColor = vec3(0.0);
     vec3 ambient = vec3(0.1);
-
+    Light light;
     // Simple Diffuse Lighting (Lambertian)
     for (int i = 0; i < MAX_LIGHTS; i++) {
         if (i >= uNumLights) break;
         
-        Light light = uLights[i];
+        light = uLights[i];
+
         vec3 lightDir = normalize(light.position - hitInfo.hitPoint);
         
         // Calculate diffuse intensity
         float diff = max(dot(hitInfo.normal, lightDir), 0.0);
-        
-        finalColor += hitInfo.baseColor * light.color * diff;
-    }
 
+        // Calculate specular intensity
+        vec3 reflected = reflect(-lightDir, hitInfo.normal);
+        float specAngle = max(dot(reflected, -hitInfo.rayDir), 0.0);
+        float spec = pow(specAngle, light.shininess);
+        
+        finalColor += hitInfo.baseColor * light.color * (diff + spec);
+    }
     return finalColor + hitInfo.baseColor * ambient;
 }
 
@@ -174,11 +178,12 @@ vec2 scaleUV(vec2 uv) {
 }
 
 void main() {
-    
+
     vec2 uv = scaleUV(vUV);
     vec3 rayDir = normalize(cam.forward + uv.x * cam.right + uv.y * cam.up);
 
     HitInfo hitInfo = intersectScene(cam.pos, rayDir);
 
     vec3 color = calcColor(hitInfo);
+    FragColor = vec4(color, 1.0);
 }
