@@ -47,7 +47,7 @@ const int TYPE_REFRACTIVE = 2;
 
 const int MAX_SPHERES = 16;
 const int MAX_LIGHTS = 4;
-const int MAX_DEPTH = 5;
+const int MAX_DEPTH = 14;
 
 in vec2 vUV;
 out vec4 FragColor;
@@ -95,6 +95,7 @@ vec3 checkerboardColor(vec3 rgbColor, vec3 hitPoint) {
     info.t = 10000.0; // Initialize with a far distance
     info.type = -1;   // -1 indicates no hit
     info.rayDir = rayDir;
+    info.inside = 0;
     
     // 1. Intersect Plane
     float denom = dot(uPlane.normal, rayDir);
@@ -122,12 +123,19 @@ vec3 checkerboardColor(vec3 rgbColor, vec3 hitPoint) {
 
         if (h >= 0.0) {
             float t = -b - sqrt(h);
+            int inside = 0;
+            if (t < 0.001) {
+                t = -b + sqrt(h);
+                inside = 1;
+            }
             if (t > 0.001 && t < info.t) {
                 info.t = t;
                 info.hitPoint = rayOrigin + rayDir * t;
                 info.normal = normalize(info.hitPoint - s.center);
                 info.baseColor = s.color;
                 info.type = s.type;
+                info.inside = inside;
+                
             }
         }
     }
@@ -141,27 +149,46 @@ vec3 calcColor(/*hit data type*/ HitInfo hitInfo) {
     }
 
     vec3 finalColor = vec3(0.0);
-    vec3 ambient = vec3(0.1);
+    vec3 ambient = vec3(0.1, 0.2, 0.3);
     Light light;
+
+    vec3 normal = hitInfo.normal;
+    if (hitInfo.inside == 1) normal = -normal;
+
     // Simple Diffuse Lighting (Lambertian)
     for (int i = 0; i < MAX_LIGHTS; i++) {
         if (i >= uNumLights) break;
-        
+        float diff = 0.0;
         light = uLights[i];
 
         vec3 lightDir = normalize(light.position - hitInfo.hitPoint);
+        float distanceToLight = length(light.position - hitInfo.hitPoint);
+
+        // Hard shadows
+        HitInfo shadowHit = intersectScene(hitInfo.hitPoint + normal * 0.01, lightDir);
+        if (shadowHit.type != -1 && shadowHit.type != TYPE_REFRACTIVE && shadowHit.t < distanceToLight) {
+            continue;
+        }
         
         // Calculate diffuse intensity
-        float diff = max(dot(hitInfo.normal, lightDir), 0.0);
+        if (hitInfo.type == TYPE_DIFFUSE) {
+            diff = max(dot(normal, lightDir), 0.0);
+        }
 
         // Calculate specular intensity
-        vec3 reflected = reflect(-lightDir, hitInfo.normal);
+        vec3 reflected = reflect(-lightDir, normal);
         float specAngle = max(dot(reflected, -hitInfo.rayDir), 0.0);
-        float spec = pow(specAngle, light.shininess);
+        float spec = pow(specAngle, light.shininess);  
+        finalColor += hitInfo.baseColor * light.color * (diff + spec); //diffuse is 0 if this is a reflective or transpernt object.
+    
         
-        finalColor += hitInfo.baseColor * light.color * (diff + spec);
+       
     }
-    return finalColor + hitInfo.baseColor * ambient;
+    if (hitInfo.type == TYPE_DIFFUSE) {
+        finalColor += hitInfo.baseColor * ambient;
+    }
+
+    return finalColor;
 }
 
 /* scales UV coordinates based on resolution
@@ -181,9 +208,44 @@ void main() {
 
     vec2 uv = scaleUV(vUV);
     vec3 rayDir = normalize(cam.forward + uv.x * cam.right + uv.y * cam.up);
+    vec3 rayOrigin = cam.pos;
 
-    HitInfo hitInfo = intersectScene(cam.pos, rayDir);
+    vec3 color = vec3(0.0);
+    vec3 throughput = vec3(1.0);
 
-    vec3 color = calcColor(hitInfo);
+    for (int i = 0; i < MAX_DEPTH; i++) {
+        HitInfo hitInfo = intersectScene(rayOrigin, rayDir);
+        
+        vec3 localColor = calcColor(hitInfo);
+        color += throughput * localColor;
+
+        if (hitInfo.type == TYPE_REFLECTIVE) {
+            throughput *= hitInfo.baseColor;
+            rayOrigin = hitInfo.hitPoint + hitInfo.normal * 0.01;
+            rayDir = reflect(rayDir, hitInfo.normal);
+        } else if (hitInfo.type == TYPE_REFRACTIVE) {
+            vec3 normal = hitInfo.normal;
+            float eta;
+            if (dot(rayDir, normal) < 0.0) { 
+                // Entering
+                eta = 1.0 / 1.5;
+            } else {
+                // Exiting
+                eta = 1.5;
+                normal = -normal;
+            }
+            vec3 refractDir = refract(rayDir, normal, eta);
+            if (length(refractDir) == 0.0) {
+                rayDir = reflect(rayDir, normal);
+            } else {
+                rayDir = refractDir;
+            }
+            rayOrigin = hitInfo.hitPoint + rayDir * 0.01;
+            throughput *= hitInfo.baseColor;
+        } else {
+            break;
+        }
+    }
+    
     FragColor = vec4(color, 1.0);
 }
