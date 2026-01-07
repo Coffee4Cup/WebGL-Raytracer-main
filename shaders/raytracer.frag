@@ -242,7 +242,7 @@ void main() {
             }
             rayOrigin = hitInfo.hitPoint + rayDir * 0.01;
             throughput *= hitInfo.baseColor;
-        } else {
+        } else {// Diffuse color no need for reflection or refraction
             break;
         }
     }
